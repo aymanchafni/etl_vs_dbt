@@ -1,0 +1,13 @@
+version: 2
+
+sources:
+  - name: tpch_database         # Name of the source, used to reference it in dbt models
+    description: "Source de données TPCH dans DuckDB"
+    schema: main           # The schema in DuckDB where the tables are located (main is the default schema for DuckDB)
+    tables:
+      - name: lineitem
+      - name: orders
+      - name: customer
+      - name: part
+      - name: region
+      - name: nation

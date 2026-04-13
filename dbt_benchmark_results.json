@@ -1,0 +1,112 @@
+[
+    {
+        "analysis_name":"Data ingestion and dimensional modeling",
+        "start_time":1776034995.9357647896,
+        "end_time":1776035005.935790062,
+        "execution_time":10.0000252724,
+        "cpu_time":27.3648,
+        "memory_peak":1.0482368469,
+        "row_count":null,
+        "throughput":null
+    },
+    {
+        "analysis_name":"Transform dim_region",
+        "start_time":1776035005.9964950085,
+        "end_time":1776035012.3912472725,
+        "execution_time":6.394752264,
+        "cpu_time":0.0034,
+        "memory_peak":1.0482368469,
+        "row_count":null,
+        "throughput":null
+    },
+    {
+        "analysis_name":"Transform dim_date",
+        "start_time":1776035012.4254667759,
+        "end_time":1776035018.3932979107,
+        "execution_time":5.9678311348,
+        "cpu_time":0.0026,
+        "memory_peak":1.0482368469,
+        "row_count":null,
+        "throughput":null
+    },
+    {
+        "analysis_name":"Transform dim_customer",
+        "start_time":1776035018.4356105328,
+        "end_time":1776035024.7310523987,
+        "execution_time":6.2954418659,
+        "cpu_time":0.0037,
+        "memory_peak":1.0482368469,
+        "row_count":null,
+        "throughput":null
+    },
+    {
+        "analysis_name":"Transform dim_product",
+        "start_time":1776035024.7909045219,
+        "end_time":1776035031.2320091724,
+        "execution_time":6.4411046505,
+        "cpu_time":0.003,
+        "memory_peak":1.0482368469,
+        "row_count":null,
+        "throughput":null
+    },
+    {
+        "analysis_name":"Transform fact_sales",
+        "start_time":1776035031.2603240013,
+        "end_time":1776035040.2226321697,
+        "execution_time":8.9623081684,
+        "cpu_time":0.0039,
+        "memory_peak":1.0482368469,
+        "row_count":null,
+        "throughput":null
+    },
+    {
+        "analysis_name":"Top 5 of customers by total revenue",
+        "start_time":1776035040.2883994579,
+        "end_time":1776035044.7073771954,
+        "execution_time":4.4189777374,
+        "cpu_time":0.003,
+        "memory_peak":1.0482368469,
+        "row_count":null,
+        "throughput":null
+    },
+    {
+        "analysis_name":"Total revenue per region and year",
+        "start_time":1776035044.7726566792,
+        "end_time":1776035048.7415378094,
+        "execution_time":3.9688811302,
+        "cpu_time":0.0025,
+        "memory_peak":1.0482368469,
+        "row_count":null,
+        "throughput":null
+    },
+    {
+        "analysis_name":"Top 5 of market segments by total revenue",
+        "start_time":1776035048.7788124084,
+        "end_time":1776035052.5217659473,
+        "execution_time":3.7429535389,
+        "cpu_time":0.0017,
+        "memory_peak":1.0482368469,
+        "row_count":null,
+        "throughput":null
+    },
+    {
+        "analysis_name":"Top 5 of products by total revenue",
+        "start_time":1776035052.5468118191,
+        "end_time":1776035056.3484456539,
+        "execution_time":3.8016338348,
+        "cpu_time":0.001,
+        "memory_peak":1.0482368469,
+        "row_count":null,
+        "throughput":null
+    },
+    {
+        "analysis_name":"Total revenue per quarter and year",
+        "start_time":1776035056.3705658913,
+        "end_time":1776035060.1139984131,
+        "execution_time":3.7434325218,
+        "cpu_time":0.001,
+        "memory_peak":1.0482368469,
+        "row_count":null,
+        "throughput":null
+    }
+]

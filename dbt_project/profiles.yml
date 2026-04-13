@@ -1,0 +1,10 @@
+# This file defines the connection profiles to manage database connections (duckdb). 
+# In this case, we are configuring a connection to a DuckDB database stored in a local file. 
+
+inf7225_duckdb_profile:
+  outputs:
+    dev:              
+      type: duckdb
+      path: '../data/elt_database.db'
+      threads: 4      # Number of threads to use for dbt operations
+  target: dev         # Default target to use when running dbt commands

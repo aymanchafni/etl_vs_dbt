@@ -1,0 +1,12 @@
+name: 'dbt_elt'
+version: '1.0.0'
+config-version: 2
+
+profile: 'inf7225_duckdb_profile' # Name of the profile to use from ~/.dbt/profiles.yml
+
+models:
+  dbt_elt:
+    staging:
+      +materialized: view      # Clean tables are materialized as views (faster to build, but slower to query)
+    marts:
+      +materialized: table     # The dimensional and fact tables are materialized as tables (faster for querying)
