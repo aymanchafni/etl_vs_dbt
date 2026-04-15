@@ -1,6 +1,7 @@
 from dbt_project import dbt
 import scripts.dbgen as dbgen
 import etl_project.etl as etl
+import etl_project.etl_tests as etl_tests
 import pandas as pd
 import plotly.graph_objects as go
 
@@ -12,13 +13,14 @@ if __name__ == "__main__":
     print("2. Lancer le pipeline ETL (Python + DuckDB)\n")
     print("3. Lancer le pipeline ELT (dbt + DuckDB)\n")
     print("4. Comparer les performances des deux pipelines et afficher les résultats\n")
-    print("5. Quitter\n")
+    print("5. Comparer la maintenabilité (tests de qualité ETL vs ELT)\n")
+    print("6. Quitter\n")
     print("===================================================\n")
 
-    choice = input("Veuillez entrer votre choix (1, 2, 3 ou 4) : \n")
+    choice = input("Veuillez entrer votre choix (1, 2, 3, 4, 5 ou 6) : \n")
 
-    while choice not in ["1", "2", "3", "4", "5"]:
-        choice = input("Choix invalide. Veuillez entrer 1, 2, 3, 4 ou 5 : \n")
+    while choice not in ["1", "2", "3", "4", "5", "6"]:
+        choice = input("Choix invalide. Veuillez entrer 1, 2, 3, 4, 5 ou 6 : \n")
 
     match choice:
         case "1":
@@ -127,5 +129,116 @@ if __name__ == "__main__":
                     "Phase Analyse — Pic memoire par requete : ETL vs ELT")
 
         case "5":
+            import pandas as pd
+            import plotly.graph_objects as go
+            from plotly.subplots import make_subplots
+
+            print("\nLancement des tests de qualité des données...\n")
+            print("1. Lancer les tests ETL (Pandas) et ELT (dbt) maintenant\n")
+            print("2. Charger les résultats depuis les fichiers JSON existants\n")
+
+            sub = input("Choix (1 ou 2) : \n")
+            while sub not in ["1", "2"]:
+                sub = input("Choix invalide (1 ou 2) : \n")
+
+            if sub == "1":
+                etl_test_results = etl_tests.launch()
+                dbt_test_results = dbt.launch_tests()
+
+                etl_df = pd.DataFrame(etl_test_results)
+                dbt_df = pd.DataFrame(dbt_test_results)
+                etl_df.to_json('etl_test_results.json', orient='records', indent=4)
+                dbt_df.to_json('dbt_test_results.json', orient='records', indent=4)
+            else:
+                etl_df = pd.read_json('etl_test_results.json')
+                dbt_df = pd.read_json('dbt_test_results.json')
+
+            etl_df['type'] = 'ETL (Pandas)'
+            dbt_df['type'] = 'ELT (dbt)'
+            all_df = pd.concat([etl_df, dbt_df], ignore_index=True)
+
+            models    = list(etl_df['analysis_name'].str.replace('Tests ', ''))
+            COLORS    = {'ETL (Pandas)': 'orange', 'ELT (dbt)': 'steelblue'}
+            pipelines = ['ETL (Pandas)', 'ELT (dbt)']
+
+            fig = make_subplots(
+                rows=1, cols=3,
+                subplot_titles=(
+                    "Temps d'exécution des tests (s)",
+                    "Nb tests par suite",
+                    "Tests passés vs échoués"
+                )
+            )
+
+            import numpy as np
+            x = np.arange(len(models))
+            width = 0.35
+
+            for i, pipeline in enumerate(pipelines):
+                sub_df = all_df[all_df['type'] == pipeline].reset_index(drop=True)
+
+                # Graphe 1 — Temps d'exécution
+                fig.add_trace(go.Bar(
+                    name=pipeline, x=models,
+                    y=sub_df['execution_time'].tolist(),
+                    marker_color=COLORS[pipeline],
+                    text=[f"{v:.4f}s" for v in sub_df['execution_time']],
+                    textposition='outside',
+                    showlegend=(i == 0),
+                    legendgroup=pipeline,
+                ), row=1, col=1)
+
+                # Graphe 2 — Nombre de tests
+                total_tests = (sub_df['tests_passed'] + sub_df['tests_failed']).tolist()
+                fig.add_trace(go.Bar(
+                    name=pipeline, x=models,
+                    y=total_tests,
+                    marker_color=COLORS[pipeline],
+                    text=total_tests,
+                    textposition='outside',
+                    showlegend=False,
+                    legendgroup=pipeline,
+                ), row=1, col=2)
+
+                # Graphe 3 — Passés vs Échoués (stacké)
+                fig.add_trace(go.Bar(
+                    name=f"{pipeline} - Passés",
+                    x=[f"{m}<br>({pipeline.split()[0]})" for m in models],
+                    y=sub_df['tests_passed'].tolist(),
+                    marker_color=COLORS[pipeline],
+                    opacity=0.9,
+                    showlegend=False,
+                ), row=1, col=3)
+                fig.add_trace(go.Bar(
+                    name=f"{pipeline} - Échoués",
+                    x=[f"{m}<br>({pipeline.split()[0]})" for m in models],
+                    y=sub_df['tests_failed'].tolist(),
+                    marker_color='crimson',
+                    opacity=0.7,
+                    showlegend=False,
+                ), row=1, col=3)
+
+            fig.update_layout(
+                title_text="Comparaison Maintenabilité — Tests de qualité ETL (Pandas) vs ELT (dbt)",
+                barmode='group',
+                template='plotly_white',
+                height=550,
+                legend=dict(orientation="h", yanchor="bottom", y=1.05,
+                            xanchor="right", x=1),
+            )
+            fig.update_traces(row=1, col=3)
+            fig.update_layout(barmode='stack')
+            fig.show()
+
+            # Résumé texte
+            for pipeline, df in [('ETL (Pandas)', etl_df), ('ELT (dbt)', dbt_df)]:
+                tp = df['tests_passed'].sum()
+                tf = df['tests_failed'].sum()
+                tt = df['execution_time'].sum()
+                print(f"\n{pipeline} : {tp+tf} tests | {tp} passés | {tf} échoués | "
+                      f"durée totale : {tt:.4f}s | LOC tests : "
+                      + ("~70 (manuel)" if 'Pandas' in pipeline else "~60 (schema.yml)"))
+
+        case "6":
             print("Merci d'avoir utilisé le projet ETL vs DBT. À bientôt !")
             exit(0)

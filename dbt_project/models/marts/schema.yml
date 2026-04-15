@@ -1,0 +1,104 @@
+version: 2
+
+models:
+
+  - name: dim_region
+    description: "Dimension des régions géographiques"
+    columns:
+      - name: region_key
+        description: "Clé primaire de la région"
+        tests:
+          - not_null
+          - unique
+      - name: region_name
+        description: "Nom de la région"
+        tests:
+          - not_null
+
+  - name: dim_date
+    description: "Dimension des dates d'expédition"
+    columns:
+      - name: date_key
+        description: "Clé primaire (date d'expédition)"
+        tests:
+          - not_null
+          - unique
+      - name: year
+        tests:
+          - not_null
+      - name: month
+        tests:
+          - not_null
+          - accepted_values:
+              values: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+      - name: quarter
+        tests:
+          - not_null
+          - accepted_values:
+              values: [1, 2, 3, 4]
+
+  - name: dim_customer
+    description: "Dimension des clients"
+    columns:
+      - name: customer_key
+        description: "Clé primaire du client"
+        tests:
+          - not_null
+          - unique
+      - name: name
+        tests:
+          - not_null
+      - name: market_segment
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['AUTOMOBILE', 'BUILDING', 'FURNITURE', 'HOUSEHOLD', 'MACHINERY']
+
+  - name: dim_product
+    description: "Dimension des produits"
+    columns:
+      - name: product_key
+        description: "Clé primaire du produit"
+        tests:
+          - not_null
+          - unique
+      - name: name
+        tests:
+          - not_null
+
+  - name: fact_sales
+    description: "Table de fait des ventes"
+    columns:
+      - name: order_key
+        tests:
+          - not_null
+      - name: product_key
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_product')
+              field: product_key
+      - name: date_key
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_date')
+              field: date_key
+      - name: customer_key
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_customer')
+              field: customer_key
+      - name: region_key
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_region')
+              field: region_key
+      - name: quantity
+        tests:
+          - not_null
+      - name: revenue
+        tests:
+          - not_null

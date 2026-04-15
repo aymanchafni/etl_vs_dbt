@@ -42,6 +42,45 @@ def run_dbt_compile():
     except subprocess.CalledProcessError as e:
         print(f"Erreur lors de l'exécution de dbt compile : {e.stderr}")
 
+def run_dbt_tests(model_name=None) -> dict:
+    """
+    Lance dbt test (sur un modèle ou sur tous) et retourne
+    le nombre de tests passés/échoués parsé depuis stdout.
+    """
+    cmd = ["dbt", "test", "--quiet"]
+    if model_name:
+        cmd += ["--select", model_name]
+
+    label = f"Tests {model_name}" if model_name else "Tests (tous modèles)"
+    print(f"--- {label} ---")
+
+    try:
+        result = subprocess.run(
+            cmd, cwd=DBT_PROJECT_DIR, capture_output=True, text=True, check=True
+        )
+        output = result.stdout + result.stderr
+    except subprocess.CalledProcessError as e:
+        output = e.stdout + e.stderr
+        if e.stdout: print(e.stdout)
+        if e.stderr: print(e.stderr)
+
+    # Parser le résumé dbt : "X of Y passed, Z failed"
+    passed = failed = 0
+    for line in output.splitlines():
+        line_l = line.lower()
+        if "passed" in line_l and "of" in line_l:
+            parts = line_l.replace(",", "").split()
+            try:
+                idx = parts.index("of")
+                passed = int(parts[idx - 1])
+                total  = int(parts[idx + 1])
+                failed = total - passed
+            except (ValueError, IndexError):
+                pass
+
+    return {"tests_passed": passed, "tests_failed": failed}
+
+
 def run_dbt_model(model_name):
     """Lance dbt run sur un seul modèle et retourne le nombre de lignes produites."""
     cmd = ["dbt", "run", "--select", model_name, "--quiet"]
@@ -131,3 +170,45 @@ def launch():
     df = pd.DataFrame(results)
     df.to_json('dbt_benchmark_results.json', orient='records', indent=4)
     print("\nLe fichier dbt_benchmark_results.json a été créé avec succès.")
+
+
+def launch_tests() -> list[dict]:
+    """
+    Exécute dbt test par modèle, benchmark chaque suite,
+    et retourne la liste des benchmarks pour comparaison.
+    """
+    print("\n" + "=" * 50)
+    print("TESTS DE QUALITÉ — Pipeline ELT (dbt test)")
+    print("=" * 50 + "\n")
+
+    mart_models    = ["dim_region", "dim_date", "dim_customer", "dim_product", "fact_sales"]
+    test_results   = []
+
+    for model in mart_models:
+        print(f"\n  [Tests {model}]")
+        b = benchmark_decorator(
+            analysis_name  = f"Tests {model}",
+            func           = lambda m=model: run_dbt_tests(m),
+            row_count_func = lambda r: r.get("tests_passed", 0) + r.get("tests_failed", 0),
+        )()
+
+        bdict = b.to_dict()
+        bdict["tests_passed"] = b.result.get("tests_passed", 0) if b.result else 0
+        bdict["tests_failed"] = b.result.get("tests_failed", 0) if b.result else 0
+
+        status = "✅" if bdict["tests_failed"] == 0 else "❌"
+        print(f"    {status} {bdict['tests_passed']} passés"
+              + (f", {bdict['tests_failed']} échoués" if bdict["tests_failed"] else ""))
+
+        test_results.append(bdict)
+
+    total_passed = sum(r["tests_passed"] for r in test_results)
+    total_failed = sum(r["tests_failed"] for r in test_results)
+    total        = total_passed + total_failed
+
+    print(f"\n{'=' * 50}")
+    print(f"RÉSULTAT : {total_passed}/{total} tests passés"
+          + (f"  ⚠️  {total_failed} échecs" if total_failed else "  ✅ Tous passés"))
+    print("=" * 50)
+
+    return test_results

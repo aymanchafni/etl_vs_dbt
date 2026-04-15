@@ -1,0 +1,62 @@
+[
+    {
+        "analysis_name":"Tests dim_region",
+        "start_time":1776208596.7848563194,
+        "end_time":1776208601.5139358044,
+        "execution_time":4.7290794849,
+        "cpu_time":0.0013,
+        "memory_peak":0.708820343,
+        "row_count":0,
+        "throughput":null,
+        "tests_passed":0,
+        "tests_failed":0
+    },
+    {
+        "analysis_name":"Tests dim_date",
+        "start_time":1776208601.5343606472,
+        "end_time":1776208604.1933269501,
+        "execution_time":2.6589663029,
+        "cpu_time":0.0007,
+        "memory_peak":0.708820343,
+        "row_count":0,
+        "throughput":null,
+        "tests_passed":0,
+        "tests_failed":0
+    },
+    {
+        "analysis_name":"Tests dim_customer",
+        "start_time":1776208604.2078669071,
+        "end_time":1776208606.7964553833,
+        "execution_time":2.5885884762,
+        "cpu_time":0.0008,
+        "memory_peak":0.708820343,
+        "row_count":0,
+        "throughput":null,
+        "tests_passed":0,
+        "tests_failed":0
+    },
+    {
+        "analysis_name":"Tests dim_product",
+        "start_time":1776208606.8087332249,
+        "end_time":1776208609.3543848991,
+        "execution_time":2.5456516743,
+        "cpu_time":0.0007,
+        "memory_peak":0.708820343,
+        "row_count":0,
+        "throughput":null,
+        "tests_passed":0,
+        "tests_failed":0
+    },
+    {
+        "analysis_name":"Tests fact_sales",
+        "start_time":1776208609.3774776459,
+        "end_time":1776208614.0881721973,
+        "execution_time":4.7106945515,
+        "cpu_time":0.0009,
+        "memory_peak":0.708820343,
+        "row_count":0,
+        "throughput":null,
+        "tests_passed":0,
+        "tests_failed":0
+    }
+]
