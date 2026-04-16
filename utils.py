@@ -41,19 +41,22 @@ def benchmark_decorator(analysis_name, func, row_count_func=None):
     def wrapper(*args, **kwargs):
         gc.collect()
 
-        ru_before  = resource.getrusage(resource.RUSAGE_SELF)
-        start_time = time()
+        ru_before       = resource.getrusage(resource.RUSAGE_SELF)
+        ru_before_child = resource.getrusage(resource.RUSAGE_CHILDREN)
+        start_time      = time()
 
         result = func(*args, **kwargs)
 
-        end_time  = time()
-        ru_after  = resource.getrusage(resource.RUSAGE_SELF)
+        end_time        = time()
+        ru_after        = resource.getrusage(resource.RUSAGE_SELF)
+        ru_after_child  = resource.getrusage(resource.RUSAGE_CHILDREN)
 
         memory_peak = ru_after.ru_maxrss / (1024 * 1024)
-        cpu_time    = round(
-            (ru_after.ru_utime - ru_before.ru_utime) +
-            (ru_after.ru_stime - ru_before.ru_stime), 4
-        )
+
+        # Additionner CPU du processus courant + subprocesses (dbt, etc.)
+        cpu_self  = (ru_after.ru_utime  - ru_before.ru_utime) +                     (ru_after.ru_stime  - ru_before.ru_stime)
+        cpu_child = (ru_after_child.ru_utime - ru_before_child.ru_utime) +                     (ru_after_child.ru_stime - ru_before_child.ru_stime)
+        cpu_time  = round(cpu_self + cpu_child, 4)
 
         row_count = None
         if row_count_func is not None:

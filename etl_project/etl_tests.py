@@ -152,48 +152,44 @@ def launch() -> list[dict]:
     print("Chargement des tables depuis etl_database.db...")
     tables = load_tables()
 
-    benchmark_results = []
-    all_tests         = []
-    total_passed      = 0
-    total_failed      = 0
+    all_test_results = []
+    total_passed     = 0
+    total_failed     = 0
 
+    # ── Exécution de toutes les suites en une seule passe benchmarkée ────────
+    def run_all_suites():
+        results = []
+        for _, suite_func in SUITES:
+            results.extend(suite_func(tables))
+        return results
+
+    b = benchmark_decorator(
+        analysis_name  = "Tests (tous modèles)",
+        func           = run_all_suites,
+        row_count_func = lambda r: len(r),
+    )()
+
+    all_test_results = b.result
+    total_passed     = sum(1 for r in all_test_results if r["passed"])
+    total_failed     = sum(1 for r in all_test_results if not r["passed"])
+
+    # Affichage détaillé par modèle
     for model_name, suite_func in SUITES:
+        suite = suite_func(tables)
         print(f"\n  [Tests {model_name}]")
-
-        def run_suite(func=suite_func, t=tables):
-            return func(t)
-
-        b = benchmark_decorator(
-            analysis_name  = f"Tests {model_name}",
-            func           = run_suite,
-            row_count_func = lambda r: len(r),   # nombre de tests exécutés
-        )()
-
-        suite_results = b.result
-        passed  = sum(1 for r in suite_results if r["passed"])
-        failed  = sum(1 for r in suite_results if not r["passed"])
-        total_passed += passed
-        total_failed += failed
-
-        for r in suite_results:
+        for r in suite:
             status = "✅" if r["passed"] else "❌"
             print(f"    {status} {r['test']}"
                   + (f"  ({r['failures']} échecs)" if not r["passed"] else ""))
 
-        all_tests.extend(suite_results)
+    bdict = b.to_dict()
+    bdict["tests_passed"] = total_passed
+    bdict["tests_failed"] = total_failed
 
-        bdict = b.to_dict()
-        bdict["tests_passed"] = passed
-        bdict["tests_failed"] = failed
-        benchmark_results.append(bdict)
-
-        gc.collect()
-
-    # Résumé global
     print(f"\n{'=' * 50}")
     total = total_passed + total_failed
     print(f"RÉSULTAT : {total_passed}/{total} tests passés"
           + (f"  ⚠️  {total_failed} échecs" if total_failed else "  ✅ Tous passés"))
     print("=" * 50)
 
-    return benchmark_results
+    return [bdict]

@@ -1,62 +1,14 @@
 [
     {
-        "analysis_name":"Tests dim_region",
-        "start_time":1776208596.5045881271,
-        "end_time":1776208596.5124528408,
-        "execution_time":0.0078647137,
-        "cpu_time":0.0025,
-        "memory_peak":0.708820343,
-        "row_count":3,
-        "throughput":381.45,
-        "tests_passed":3,
-        "tests_failed":0
-    },
-    {
-        "analysis_name":"Tests dim_date",
-        "start_time":1776208596.5382380486,
-        "end_time":1776208596.5416958332,
-        "execution_time":0.0034577847,
-        "cpu_time":0.002,
-        "memory_peak":0.708820343,
-        "row_count":7,
-        "throughput":2024.42,
-        "tests_passed":7,
-        "tests_failed":0
-    },
-    {
-        "analysis_name":"Tests dim_customer",
-        "start_time":1776208596.5613217354,
-        "end_time":1776208596.5717639923,
-        "execution_time":0.0104422569,
-        "cpu_time":0.007,
-        "memory_peak":0.708820343,
-        "row_count":5,
-        "throughput":478.82,
-        "tests_passed":5,
-        "tests_failed":0
-    },
-    {
-        "analysis_name":"Tests dim_product",
-        "start_time":1776208596.5971422195,
-        "end_time":1776208596.599758625,
-        "execution_time":0.0026164055,
-        "cpu_time":0.0029,
-        "memory_peak":0.708820343,
-        "row_count":3,
-        "throughput":1146.61,
-        "tests_passed":3,
-        "tests_failed":0
-    },
-    {
-        "analysis_name":"Tests fact_sales",
-        "start_time":1776208596.6254062653,
-        "end_time":1776208596.7514183521,
-        "execution_time":0.1260120869,
-        "cpu_time":0.1273,
-        "memory_peak":0.708820343,
-        "row_count":11,
-        "throughput":87.29,
-        "tests_passed":11,
+        "analysis_name":"Tests (tous mod\u00e8les)",
+        "start_time":1776329931.6376714706,
+        "end_time":1776329931.8171846867,
+        "execution_time":0.179513216,
+        "cpu_time":0.1596,
+        "memory_peak":0.7127304077,
+        "row_count":29,
+        "throughput":161.55,
+        "tests_passed":29,
         "tests_failed":0
     }
 ]

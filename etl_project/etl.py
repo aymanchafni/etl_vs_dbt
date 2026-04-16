@@ -92,15 +92,21 @@ queries = [
 # ÉTAPE 1 — EXTRACT
 # Lecture des fichiers Parquet bruts → DataFrames Pandas, sans transformation
 # ─────────────────────────────────────────────
-def extract() -> dict[str, pd.DataFrame]:
-    print("--- [EXTRACT] Lecture des fichiers Parquet bruts ---")
+def extract(sample_fraction: float = 1.0) -> dict[str, pd.DataFrame]:
+    print(f"--- [EXTRACT] Lecture des fichiers Parquet bruts (sample={sample_fraction}) ---")
 
-    tables = ["lineitem", "orders", "customer", "part", "region", "nation"]
+    # Tables de référence — toujours complètes
+    full_tables   = ["customer", "part", "region", "nation"]
+    # Tables de fait — échantillonnées selon sample_fraction
+    sample_tables = ["lineitem", "orders"]
+
     raw: dict[str, pd.DataFrame] = {}
-
-    for table in tables:
+    for table in full_tables + sample_tables:
         path = os.path.join(DATA_DIR, f"{table}.parquet")
-        raw[table] = pd.read_parquet(path)
+        df   = pd.read_parquet(path)
+        if table in sample_tables and sample_fraction < 1.0:
+            df = df.sample(frac=sample_fraction, random_state=42).reset_index(drop=True)
+        raw[table] = df
         print(f"  ✔ {table:<12}: {len(raw[table]):>10,} lignes chargées")
 
     print()
@@ -257,36 +263,44 @@ def load(transformed: dict[str, pd.DataFrame]) -> None:
 # ─────────────────────────────────────────────
 # PIPELINE PRINCIPAL
 # ─────────────────────────────────────────────
-def data_ingestion(transform_results: list) -> None:
+def data_ingestion(transform_results: list, sample_fraction: float = 1.0) -> None:
     """
     Orchestre Extract → Transform → Load.
     transform_results : liste collectant les benchmarks par table (passée par référence)
+    sample_fraction   : fraction des données à utiliser (0.1, 0.5, 1.0)
     """
-    raw         = extract()
+    raw         = extract(sample_fraction)
     transformed = transform(raw, transform_results)
     del raw
     gc.collect()
     load(transformed)
 
 
-def launch():
-    print("\n" + "=" * 50 + "\n")
-    print("Lancement du pipeline ETL (Python + DuckDB)...\n")
-    print("Architecture : Extract (Parquet → Pandas) → Transform (Pandas) → Load (fichier DuckDB)\n")
+SCALE_FACTORS = [0.1, 0.5, 1.0]
 
-    transform_results = []  # collecte les benchmarks granulaires par table
+
+def _run_single_scale(sf: float) -> None:
+    """
+    Exécute le pipeline ETL pour un seul scale factor et sauvegarde
+    les résultats dans un fichier JSON temporaire.
+    Appelé dans un subprocess isolé pour libérer toute la mémoire après.
+    """
+    import json
+
+    transform_results = []
 
     benchmark_data_ingestion = benchmark_decorator(
         analysis_name="Data ingestion and dimensional modeling",
-        func=lambda: data_ingestion(transform_results),
+        func=lambda: data_ingestion(transform_results, sf),
     )()
 
-    # Résultats : ingestion globale + détail par table de la phase Transform
-    results = [benchmark_data_ingestion.to_dict()] + transform_results
+    sf_results = [benchmark_data_ingestion.to_dict()] + transform_results
+    for r in sf_results:
+        r["scale_factor"] = sf
 
-    # -- Affichage des tables chargees ------------------------------------------
+    # Affichage des tables pour ce scale
     print("\n" + "=" * 50)
-    print("TABLES CHARGEES DANS DUCKDB")
+    print(f"TABLES CHARGEES DANS DUCKDB (scale={sf})")
     print("=" * 50)
 
     tables_to_display = [
@@ -306,8 +320,7 @@ def launch():
 
     print("\n" + "=" * 50 + "\n")
 
-    # Les queries lisent depuis le fichier DuckDB sur disque — rien n'est retenu
-    # en mémoire Python entre deux requêtes, grâce au context manager
+    # Requêtes analytiques
     for i, (description, query) in enumerate(queries):
         print(f"Requête {i + 1} : {description}")
 
@@ -319,11 +332,58 @@ def launch():
             analysis_name=description,
             func=run_query,
         )()
-
         print(benchmark.result)
-
         if benchmark.execution_time:
-            results.append(benchmark.to_dict())
+            r = benchmark.to_dict()
+            r["scale_factor"] = sf
+            sf_results.append(r)
+
+    # Sauvegarde temporaire pour ce scale
+    tmp_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            f"_etl_tmp_sf{sf}.json")
+    with open(tmp_path, "w") as f:
+        json.dump(sf_results, f, indent=4)
+
+
+def launch():
+    import subprocess, sys, json
+
+    print("\n" + "=" * 50 + "\n")
+    print("Lancement du pipeline ETL (Python + DuckDB)...\n")
+    print("Architecture : Extract (Parquet → Pandas) → Transform (Pandas) → Load (fichier DuckDB)\n")
+
+    all_results = []
+
+    for sf in SCALE_FACTORS:
+        print(f"\n{'─'*50}")
+        print(f"  Scale factor : {sf} ({int(sf*100)}% des données)")
+        print(f"{'─'*50}\n")
+
+        # Chaque scale factor tourne dans un subprocess isolé
+        # → la mémoire est entièrement libérée après chaque run
+        # ROOT_DIR pointe sur la racine du projet (parent de etl_project/)
+        script = (
+            f"import sys; sys.path.insert(0, r'{ROOT_DIR.rstrip(os.sep)}'); "
+            f"import etl_project.etl as etl; etl._run_single_scale({sf})"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=ROOT_DIR,
+        )
+
+        if result.returncode != 0:
+            print(f"  ❌ Erreur lors du run sf={sf}")
+            continue
+
+        # Lire les résultats du subprocess
+        tmp_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                f"_etl_tmp_sf{sf}.json")
+        if os.path.exists(tmp_path):
+            with open(tmp_path) as f:
+                all_results.extend(json.load(f))
+            os.remove(tmp_path)
+
+    results = all_results
 
     df = pd.DataFrame(results)
     df.to_json("etl_benchmark_results.json", orient="records", indent=4)

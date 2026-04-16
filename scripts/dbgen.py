@@ -64,10 +64,9 @@ def count_parquet_tables():
     return count
 
 def generate_data(scale_factor, overwrite=False):
-
     # création du dossier de sortie si inexistant
     os.makedirs(os.path.join(ROOT_DIR, "data"), exist_ok=True)
- 
+
     # connexion à une base de données DuckDB en mémoire
     conn = duckdb.connect(database=":memory:")
 
@@ -98,5 +97,3 @@ def generate_data(scale_factor, overwrite=False):
 
     print("✅ Génération et exportation terminées !")
     conn.close()
-
-    
