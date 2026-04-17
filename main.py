@@ -124,22 +124,50 @@ if __name__ == "__main__":
                 fig.show()
 
             def plot_scalability(df, metric, ylabel, title):
+                """
+                Agrégation correcte par métrique :
+                  - execution_time : somme (temps total de toutes les tables)
+                  - memory_peak    : max  (pic mémoire global du processus)
+                  - throughput     : recalculé = sum(row_count) / sum(execution_time)
+                """
                 fig = go.Figure()
                 for pipeline in PIPELINES:
-                    sub = (df[df['type'] == pipeline]
-                           .groupby('scale_factor')[metric]
-                           .sum()
-                           .reset_index()
-                           .sort_values('scale_factor'))
+                    sub_raw = (df[df['type'] == pipeline]
+                               .dropna(subset=['scale_factor'])
+                               .sort_values('scale_factor'))
+
+                    if metric == 'memory_peak':
+                        agg = (sub_raw.groupby('scale_factor')['memory_peak']
+                               .max().reset_index())
+                        y_vals = agg['memory_peak'].tolist()
+
+                    elif metric == 'throughput':
+                        # Recalculer le débit total : sum(lignes) / sum(temps)
+                        grp = sub_raw.dropna(subset=['row_count']).groupby('scale_factor')
+                        agg = grp.apply(
+                            lambda g: g['row_count'].sum() / g['execution_time'].sum()
+                            if g['execution_time'].sum() > 0 else 0
+                        ).reset_index(name='throughput')
+                        y_vals = agg['throughput'].tolist()
+
+                    else:  # execution_time et autres métriques additives
+                        agg = (sub_raw.groupby('scale_factor')[metric]
+                               .sum().reset_index())
+                        y_vals = agg[metric].tolist()
+
+                    x_vals = agg['scale_factor'].tolist()
+
                     fig.add_trace(go.Scatter(
                         name         = pipeline,
-                        x            = sub['scale_factor'].tolist(),
-                        y            = sub[metric].tolist(),
+                        x            = x_vals,
+                        y            = y_vals,
                         mode         = "lines+markers",
                         marker       = dict(size=10),
                         line         = dict(width=3),
                         marker_color = COLORS[pipeline],
+                        hovertemplate= f"SF=%{{x}}<br>{ylabel}=%{{y:,.2f}}<extra>{pipeline}</extra>",
                     ))
+
                 fig.update_layout(
                     title        = title,
                     xaxis_title  = "Scale Factor",
@@ -156,56 +184,38 @@ if __name__ == "__main__":
                 plot_grouped_by_scale(transform_df, 'execution_time',
                     "Temps d'execution (s)",
                     "Phase Transform — Temps d'execution par table et par scale : ETL vs ELT")
-                print("\n📊 Interprétation :")
-                print("  → ETL (Pandas) est plus lent sur fact_sales car les .merge() chargent tout en RAM.")
-                print("  → ELT (dbt) délègue les jointures à DuckDB qui les exécute en C++ vectorisé.")
-                print("  → L'écart s'accentue avec le scale factor : ETL ne passe pas à l'échelle aussi bien.")
+
 
             elif choice == "2":
                 plot_grouped_by_scale(transform_df, 'cpu_time',
                     "Temps CPU (s)",
                     "Phase Transform — Temps CPU par table et par scale : ETL vs ELT")
-                print("\n📊 Interprétation :")
-                print("  → ETL consomme plus de CPU car Python a un overhead par opération Pandas (GIL, copies).")
-                print("  → ELT exécute le SQL dans DuckDB hors du thread Python, sans GIL.")
-                print("  → Un CPU time ETL élevé = coût du traitement impératif vs déclaratif.")
+
 
             elif choice == "3":
                 plot_grouped_by_scale(
                     transform_df[transform_df['throughput'].notna()], 'throughput',
                     "Lignes / seconde",
                     "Phase Transform — Debit par table et par scale : ETL vs ELT")
-                print("\n📊 Interprétation :")
-                print("  → ELT affiche un débit plus élevé sur fact_sales : DuckDB traite en colonnes (OLAP).")
-                print("  → ETL dégrade sur les grandes tables car .merge() copie les données en mémoire.")
-                print("  → Pour les dim tables (petites), l'écart est négligeable.")
+
 
             elif choice == "4":
                 plot_grouped_by_scale(transform_df, 'memory_peak',
                     "Pic memoire (MB)",
                     "Phase Transform — Pic memoire par table et par scale : ETL vs ELT")
-                print("\n📊 Interprétation :")
-                print("  → ETL charge tout en RAM (Extract + Transform + Load simultanément).")
-                print("  → ELT : les transformations SQL s'exécutent dans DuckDB sans passer par le heap Python.")
-                print("  → La différence de mémoire est plus marquée à sf=1.0.")
+
 
             elif choice == "5":
                 plot_grouped_by_scale(analysis_df, 'execution_time',
                     "Temps d'execution (s)",
                     "Phase Analyse — Temps d'execution par requete et par scale : ETL vs ELT")
-                print("\n📊 Interprétation :")
-                print("  → Les deux pipelines lisent depuis des fichiers DuckDB différents (etl vs elt).")
-                print("  → Les écarts reflètent l'état du cache OS, pas la logique des pipelines.")
-                print("  → Cette métrique n'est pas déterminante pour le choix ETL vs ELT.")
+
 
             elif choice == "6":
                 plot_grouped_by_scale(analysis_df, 'memory_peak',
                     "Pic memoire (MB)",
                     "Phase Analyse — Pic memoire par requete et par scale : ETL vs ELT")
-                print("\n📊 Interprétation :")
-                print("  → Même observation que le temps d'exécution — les différences sont dues au cache.")
-                print("  → Pour comparer la mémoire analytique de façon équitable, il faudrait")
-                print("    les deux pipelines sur le même fichier DuckDB.")
+
 
             elif choice == "7":
                 print("\n  Sur quelle metrique ? \n")
@@ -223,11 +233,7 @@ if __name__ == "__main__":
                 metric, ylabel = metric_map[sub_choice]
                 plot_scalability(transform_df, metric, ylabel,
                     f"Scalabilite — {ylabel} selon le scale factor : ETL vs ELT")
-            print("\n📊 Interprétation :")
-            print("  → Une courbe ETL plus pentue indique qu'il ne passe pas à l'échelle linéairement.")
-            print("  → ELT (dbt + DuckDB) devrait rester plus stable grâce au traitement SQL columnar.")
-            print("  → Si les deux courbes sont proches, les deux approches sont équivalentes")
-            print("    pour votre volume de données.")
+
 
 
         case "5":
@@ -298,11 +304,7 @@ if __name__ == "__main__":
                 legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="right", x=1),
             )
             fig.show()
-            print("\n📊 Interprétation :")
-            print("  → dbt exécute ses 29 tests SQL en parallèle (4 threads DuckDB) → souvent plus rapide.")
-            print("  → ETL exécute ses tests en Python pur, sans parallélisme → plus lent sur fact_sales.")
-            print("  → Les deux approches couvrent le même périmètre (29 tests identiques).")
-            print("  → Avantage dbt : les tests sont déclaratifs (schema.yml), aucun code Python à écrire.")
+
 
             # Résumé texte
             for pipeline, df_p in [('ETL (Pandas)', etl_df), ('ELT (dbt)', dbt_df)]:
@@ -355,13 +357,7 @@ if __name__ == "__main__":
                                   xanchor="right", x=1),
             )
             fig.show()
-            print("\n📊 Interprétation :")
-            print("  → ETL a plus de SLOC car l'approche impérative (Pandas) exige du code")
-            print("    explicite pour chaque transformation : boucles, merges, renommages.")
-            print("  → ELT a un CC plus bas : le SQL déclaratif n'a pas de branches if/else.")
-            print("  → Le MI d'ELT est meilleur car les fichiers dbt (SQL + YAML) sont courts")
-            print("    et ont une responsabilité unique (un fichier = un modèle).")
-            print("  → Conclusion : dbt est plus facile à maintenir et à faire évoluer.")
+
 
         case "7":
             from plotly.subplots import make_subplots
@@ -408,14 +404,7 @@ if __name__ == "__main__":
                                   xanchor="right", x=1),
             )
             fig.show()
-            print("\n📊 Interprétation :")
-            print("  → dbt génère le lineage automatiquement depuis manifest.json :")
-            print("    chaque modèle connaît ses sources et ses dépendants (DAG complet).")
-            print("  → ETL : le lineage est implicite dans le code Python — il faut lire")
-            print("    le code pour comprendre qui dépend de qui.")
-            print("  → La couverture docs colonnes est 0% pour ETL : impossible nativement.")
-            print("  → dbt docs generate produit un site web navigable avec le DAG interactif.")
-            print("  → Pour un projet en équipe, dbt offre une traçabilité incomparable.")
+
 
         case "8":
             print("Merci d'avoir utilisé le projet ETL vs DBT. À bientôt !")
