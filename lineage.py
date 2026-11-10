@@ -67,7 +67,6 @@ def analyze_dbt_lineage() -> dict:
 
     nodes      = manifest.get("nodes", {})
     sources    = manifest.get("sources", {})
-    exposures  = manifest.get("exposures", {})
 
     # Filtrer uniquement les modèles (pas les tests ni analyses)
     models = {k: v for k, v in nodes.items()
@@ -276,8 +275,10 @@ def print_report(etl: dict, elt: dict) -> None:
         ev = etl[key]
         dv = elt[key]
         def fmt(v):
-            if isinstance(v, bool): return "✅ Oui" if v else "❌ Non"
-            if isinstance(v, float): return f"{v:.1f}{unit}"
+            if isinstance(v, bool):
+                return "✅ Oui" if v else "❌ Non"
+            if isinstance(v, float):
+                return f"{v:.1f}{unit}"
             return f"{v}{unit}"
         print(f"  {label:<35} {fmt(ev):>14} {fmt(dv):>14}")
 

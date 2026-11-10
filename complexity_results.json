@@ -1,0 +1,198 @@
+{
+  "etl": {
+    "pipeline": "ETL (Pandas)",
+    "n_files": 3,
+    "total_loc": 713,
+    "total_sloc": 516,
+    "total_comments": 45,
+    "total_blank": 110,
+    "comment_ratio": 8.7,
+    "avg_cc": 1.83,
+    "avg_mi": 58.79,
+    "file_metrics": [
+      {
+        "file": "etl.py",
+        "type": "PY",
+        "loc": 384,
+        "sloc": 282,
+        "comments": 34,
+        "blank": 55,
+        "avg_cc": 1.91,
+        "mi": 56.77
+      },
+      {
+        "file": "etl_tests.py",
+        "type": "PY",
+        "loc": 195,
+        "sloc": 140,
+        "comments": 11,
+        "blank": 28,
+        "avg_cc": 1.91,
+        "mi": 61.25
+      },
+      {
+        "file": "utils.py",
+        "type": "PY",
+        "loc": 134,
+        "sloc": 94,
+        "comments": 0,
+        "blank": 27,
+        "avg_cc": 1.67,
+        "mi": 58.35
+      }
+    ]
+  },
+  "elt": {
+    "pipeline": "ELT (dbt)",
+    "n_files": 14,
+    "total_loc": 435,
+    "total_sloc": 343,
+    "total_comments": 21,
+    "total_blank": 58,
+    "comment_ratio": 6.1,
+    "avg_cc": 2.0,
+    "avg_mi": 58.38,
+    "file_metrics": [
+      {
+        "file": "dbt.py",
+        "type": "PY",
+        "loc": 200,
+        "sloc": 130,
+        "comments": 14,
+        "blank": 38,
+        "avg_cc": 2.0,
+        "mi": 58.38
+      },
+      {
+        "file": "dbt_project.yml",
+        "type": "YML",
+        "loc": 12,
+        "sloc": 10,
+        "comments": 3,
+        "blank": 2,
+        "avg_cc": null,
+        "mi": null
+      },
+      {
+        "file": "profiles.yml",
+        "type": "YML",
+        "loc": 10,
+        "sloc": 7,
+        "comments": 4,
+        "blank": 1,
+        "avg_cc": null,
+        "mi": null
+      },
+      {
+        "file": "marts/dim_customer.sql",
+        "type": "SQL",
+        "loc": 9,
+        "sloc": 8,
+        "comments": 0,
+        "blank": 1,
+        "avg_cc": null,
+        "mi": null
+      },
+      {
+        "file": "marts/fact_sales.sql",
+        "type": "SQL",
+        "loc": 22,
+        "sloc": 20,
+        "comments": 0,
+        "blank": 2,
+        "avg_cc": null,
+        "mi": null
+      },
+      {
+        "file": "marts/dim_product.sql",
+        "type": "SQL",
+        "loc": 10,
+        "sloc": 9,
+        "comments": 0,
+        "blank": 1,
+        "avg_cc": null,
+        "mi": null
+      },
+      {
+        "file": "marts/schema.yml",
+        "type": "YML",
+        "loc": 104,
+        "sloc": 98,
+        "comments": 0,
+        "blank": 6,
+        "avg_cc": null,
+        "mi": null
+      },
+      {
+        "file": "marts/dim_date.sql",
+        "type": "SQL",
+        "loc": 11,
+        "sloc": 10,
+        "comments": 0,
+        "blank": 1,
+        "avg_cc": null,
+        "mi": null
+      },
+      {
+        "file": "marts/dim_region.sql",
+        "type": "SQL",
+        "loc": 4,
+        "sloc": 3,
+        "comments": 0,
+        "blank": 1,
+        "avg_cc": null,
+        "mi": null
+      },
+      {
+        "file": "analyses/top_5_of_products_by_total_revenue.sql",
+        "type": "SQL",
+        "loc": 10,
+        "sloc": 9,
+        "comments": 0,
+        "blank": 1,
+        "avg_cc": null,
+        "mi": null
+      },
+      {
+        "file": "analyses/top_5_of_customers_by_total_revenue.sql",
+        "type": "SQL",
+        "loc": 10,
+        "sloc": 9,
+        "comments": 0,
+        "blank": 1,
+        "avg_cc": null,
+        "mi": null
+      },
+      {
+        "file": "analyses/total_revenue_per_quarter_and_year.sql",
+        "type": "SQL",
+        "loc": 11,
+        "sloc": 10,
+        "comments": 0,
+        "blank": 1,
+        "avg_cc": null,
+        "mi": null
+      },
+      {
+        "file": "analyses/total_revenue_per_region_and_year.sql",
+        "type": "SQL",
+        "loc": 12,
+        "sloc": 11,
+        "comments": 0,
+        "blank": 1,
+        "avg_cc": null,
+        "mi": null
+      },
+      {
+        "file": "analyses/top_5_of_market_segments_by_total_revenue.sql",
+        "type": "SQL",
+        "loc": 10,
+        "sloc": 9,
+        "comments": 0,
+        "blank": 1,
+        "avg_cc": null,
+        "mi": null
+      }
+    ]
+  }
+}

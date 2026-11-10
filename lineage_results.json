@@ -1,0 +1,133 @@
+{
+  "etl": {
+    "pipeline": "ETL (Pandas)",
+    "n_nodes": 10,
+    "n_sources": 1,
+    "n_edges": 12,
+    "n_tests": 29,
+    "lineage_depth": 3,
+    "doc_coverage_pct": 15.8,
+    "col_doc_coverage_pct": 0.0,
+    "auto_lineage": false,
+    "auto_docs": false,
+    "models": [
+      "extract",
+      "transform_dim_region",
+      "transform_dim_date",
+      "transform_dim_customer",
+      "transform_dim_product",
+      "transform_fact_sales",
+      "transform",
+      "load",
+      "data_ingestion",
+      "launch"
+    ],
+    "edges": [
+      [
+        "sources (Parquet)",
+        "extract"
+      ],
+      [
+        "extract",
+        "transform_dim_region"
+      ],
+      [
+        "extract",
+        "transform_dim_date"
+      ],
+      [
+        "extract",
+        "transform_dim_customer"
+      ],
+      [
+        "extract",
+        "transform_dim_product"
+      ],
+      [
+        "extract",
+        "transform_fact_sales"
+      ],
+      [
+        "transform_dim_region",
+        "load"
+      ],
+      [
+        "transform_dim_date",
+        "load"
+      ],
+      [
+        "transform_dim_customer",
+        "load"
+      ],
+      [
+        "transform_dim_product",
+        "load"
+      ],
+      [
+        "transform_fact_sales",
+        "load"
+      ],
+      [
+        "load",
+        "etl_database.db"
+      ]
+    ]
+  },
+  "elt": {
+    "pipeline": "ELT (dbt)",
+    "n_nodes": 5,
+    "n_sources": 6,
+    "n_edges": 9,
+    "n_tests": 29,
+    "lineage_depth": 2,
+    "doc_coverage_pct": 100.0,
+    "col_doc_coverage_pct": 27.8,
+    "auto_lineage": true,
+    "auto_docs": true,
+    "models": [
+      "dim_customer",
+      "fact_sales",
+      "dim_product",
+      "dim_date",
+      "dim_region"
+    ],
+    "edges": [
+      [
+        "customer",
+        "dim_customer"
+      ],
+      [
+        "lineitem",
+        "fact_sales"
+      ],
+      [
+        "customer",
+        "fact_sales"
+      ],
+      [
+        "nation",
+        "fact_sales"
+      ],
+      [
+        "orders",
+        "fact_sales"
+      ],
+      [
+        "region",
+        "fact_sales"
+      ],
+      [
+        "part",
+        "dim_product"
+      ],
+      [
+        "lineitem",
+        "dim_date"
+      ],
+      [
+        "region",
+        "dim_region"
+      ]
+    ]
+  }
+}

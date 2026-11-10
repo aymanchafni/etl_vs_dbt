@@ -12,9 +12,10 @@ Métriques collectées via radon :
 Comparaison ETL (Python impératif) vs ELT (dbt déclaratif SQL + YAML).
 """
 import os
+
 from radon.complexity import cc_visit
-from radon.raw       import analyze
-from radon.metrics   import mi_visit
+from radon.metrics import mi_visit
+from radon.raw import analyze
 
 
 # ─────────────────────────────────────────────────────────────────────────────
