@@ -1,99 +1,90 @@
-import duckdb
+"""TPC-H data generation (DuckDB `tpch` extension) and shared, consistent sampling.
+
+Both pipelines read exactly the same sampled Parquet files, so they process identical
+input. Sampling is done on *order keys* and line items follow their order, which keeps
+referential integrity (every sampled line item still has its order).
+"""
+
 import os
+import shutil
 
-# creation du dossier de sortie pour les données générées TCPH-DBGEN
-ROOT_DIR = os.path.dirname(os.path.abspath(__file__)).replace("scripts", "")
+import duckdb
 
-# different tables of the TCPH-DBGEN dataset
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_DIR = os.path.join(ROOT_DIR, "data")
+SAMPLES_DIR = os.path.join(DATA_DIR, "samples")
+
+# Tables of the TPC-H dataset
 tables = ["customer", "lineitem", "nation", "orders", "part", "partsupp", "region", "supplier"]
+# Fact tables are sampled; dimension/reference tables are always copied in full.
+SAMPLED_TABLES = {"orders", "lineitem"}
+
 
 def is_table_exported(table):
-    # vérification de l'existence des fichiers de données générés
-    return os.path.exists(os.path.join(ROOT_DIR, f"data/{table}.parquet"))
+    return os.path.exists(os.path.join(DATA_DIR, f"{table}.parquet"))
 
-def create_persistent_database(dbname = "elt_database"):
-    print("Création de la base de données à partir des fichiers Parquet existants...")
-
-    # Connexion (crée le fichier .db automatiquement)
-    con = duckdb.connect(f"{ROOT_DIR}/data/{dbname}.db")
-
-    # Récupération de tous les fichiers Parquet
-    for table in tables:
-        if os.path.exists(f"{ROOT_DIR}/data/{table}.parquet"):
-            print(f"Ingestion de {table}...")
-
-            file = f"{ROOT_DIR}/data/{table}.parquet"
-            
-            # Création de la table et importation des données depuis le fichier Parquet
-            query = f"CREATE OR REPLACE TABLE {table} AS SELECT * FROM read_parquet('{file}');"
-            con.execute(query)
-
-    tables_created = con.execute("SHOW TABLES;").fetchall()
-    print(f"\n✅ Terminé ! Base de données \"{dbname}.db\" créée avec les tables : {', '.join([table[0] for table in tables_created])}\n")
-
-    return con
-
-def create_memory_database():
-    print("--- Création d'une base de données en mémoire à partir des fichiers Parquet existants ---\n")
-
-    # Connexion à une base de données en mémoire
-    con = duckdb.connect(database=":memory:")
-
-    # Récupération de tous les fichiers Parquet
-    for table in tables:
-        if os.path.exists(f"{ROOT_DIR}/data/{table}.parquet"):
-            print(f"Ingestion de {table}...")
-
-            file = f"{ROOT_DIR}/data/{table}.parquet"
-            
-            # Création de la table et importation des données depuis le fichier Parquet
-            query = f"CREATE OR REPLACE TABLE {table} AS SELECT * FROM read_parquet('{file}');"
-            con.execute(query)
-
-    tables_created = con.execute("SHOW TABLES;").fetchall()
-    print(f"\n✅ Terminé ! Base de données en mémoire créée avec les tables : {', '.join([table[0] for table in tables_created])}\n")
-
-    return con
 
 def count_parquet_tables():
-    # Compte le nombre de tables déjà exportées au format Parquet
-    count = 0
-    for table in tables:
-        if is_table_exported(table):
-            count += 1
-    return count
+    """Number of TPC-H tables already exported as Parquet."""
+    return sum(is_table_exported(t) for t in tables)
+
 
 def generate_data(scale_factor, overwrite=False):
-    # création du dossier de sortie si inexistant
-    os.makedirs(os.path.join(ROOT_DIR, "data"), exist_ok=True)
-
-    # connexion à une base de données DuckDB en mémoire
+    """Generate TPC-H at the given scale factor (SF 1 ~ 1 GB) and export it to Parquet."""
+    os.makedirs(DATA_DIR, exist_ok=True)
     conn = duckdb.connect(database=":memory:")
-
-    # installation et chargement de l'extension TPCH pour la génération des données
     conn.execute("INSTALL tpch;")
     conn.execute("LOAD tpch;")
+    conn.execute(f"CALL dbgen(sf={float(scale_factor)});")
 
-    # generation des données TCPH-DBGEN avec une échelle de 10 (10GB)
-    conn.execute(f"CALL dbgen(sf={scale_factor});")
-
-    # exportation des données générées au format CSV
     for table in tables:
-        output_path = f"{ROOT_DIR}/data/{table}.parquet"
-
-        if not overwrite and is_table_exported(table):
-            print(f"⚠️ La table {table} existe déjà. Pour generer la table a nouveau, utilisez le mode 'overwrite' ou supprimez manuellement le fichier existant.")
-            continue
-
-        if overwrite and is_table_exported(table):
+        output_path = os.path.join(DATA_DIR, f"{table}.parquet")
+        if is_table_exported(table):
+            if not overwrite:
+                print(f"⚠️ {table} already exists, skipped (use overwrite=True to regenerate).")
+                continue
             os.remove(output_path)
-            print(f"🗑️ Fichier existant pour la table {table} supprimé.")
-        
-        print(f"Exportation de la table {table} au format PARQUET...")
+        print(f"Exporting {table} to Parquet...")
+        conn.execute(f"COPY {table} TO '{output_path}' (FORMAT PARQUET);")
 
-        query = f"COPY {table} TO '{output_path}' (FORMAT PARQUET);"
-
-        conn.execute(query=query)
-
-    print("✅ Génération et exportation terminées !")
     conn.close()
+    # Generated data changed: previously prepared samples are stale.
+    shutil.rmtree(SAMPLES_DIR, ignore_errors=True)
+    print("✅ TPC-H generation and export done")
+
+
+def sample_dir(fraction: float) -> str:
+    return os.path.join(SAMPLES_DIR, f"f{fraction:g}")
+
+
+def prepare_samples(fractions, overwrite=False):
+    """Write one directory of Parquet files per sample fraction.
+
+    Orders are selected with a deterministic hash of o_orderkey (same sample on every run
+    and for both pipelines); line items are kept iff their order is selected.
+    """
+    con = duckdb.connect(database=":memory:")
+    for fraction in fractions:
+        out_dir = sample_dir(fraction)
+        if os.path.isdir(out_dir) and not overwrite:
+            continue
+        os.makedirs(out_dir, exist_ok=True)
+        threshold = int(round(fraction * 10_000))
+        src = lambda t: os.path.join(DATA_DIR, f"{t}.parquet").replace("\\", "/")  # noqa: E731
+        con.execute(
+            f"CREATE OR REPLACE TEMP TABLE sampled_orders AS SELECT * FROM read_parquet('{src('orders')}') "
+            f"WHERE hash(o_orderkey) % 10000 < {threshold}"
+        )
+        for table in tables:
+            dst = os.path.join(out_dir, f"{table}.parquet").replace("\\", "/")
+            if table == "orders":
+                query = "SELECT * FROM sampled_orders"
+            elif table == "lineitem":
+                query = (f"SELECT l.* FROM read_parquet('{src('lineitem')}') l "
+                         "SEMI JOIN sampled_orders o ON l.l_orderkey = o.o_orderkey")
+            else:
+                query = f"SELECT * FROM read_parquet('{src(table)}')"
+            con.execute(f"COPY ({query}) TO '{dst}' (FORMAT PARQUET)")
+        n = con.execute("SELECT COUNT(*) FROM sampled_orders").fetchone()[0]
+        print(f"  ✔ sample {fraction:g}: {n:,} orders -> {out_dir}")
+    con.close()

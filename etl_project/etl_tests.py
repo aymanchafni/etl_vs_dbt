@@ -6,11 +6,12 @@ relationships, accepted_values) appliqué sur les tables chargées dans
 etl_database.db. Les tests sont benchmarkés individuellement pour
 permettre une comparaison directe avec dbt test.
 """
-import gc
+import os
+
 import duckdb
 import pandas as pd
+
 from scripts.dbgen import ROOT_DIR
-import os
 from utils import benchmark_decorator
 
 DB_PATH = os.path.join(ROOT_DIR, "data", "etl_database.db")

@@ -7,3 +7,5 @@ SELECT DISTINCT l_shipdate AS date_key,
     QUARTER(l_shipdate) AS quarter,
     WEEK(l_shipdate) AS week     
 FROM {{ source('tpch_database', 'lineitem') }}
+-- Same filter as fact_sales (and as the ETL pipeline): only finalised line items
+WHERE l_linestatus = 'F'
