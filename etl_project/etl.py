@@ -4,7 +4,7 @@ import os
 import duckdb
 import pandas as pd
 
-from scripts.dbgen import ROOT_DIR
+from scripts.dbgen import ROOT_DIR, sample_dir
 from utils import benchmark_decorator
 
 DATA_DIR = os.path.join(ROOT_DIR, "data")
@@ -95,18 +95,13 @@ queries = [
 def extract(sample_fraction: float = 1.0) -> dict[str, pd.DataFrame]:
     print(f"--- [EXTRACT] Lecture des fichiers Parquet bruts (sample={sample_fraction}) ---")
 
-    # Tables de référence — toujours complètes
-    full_tables   = ["customer", "part", "region", "nation"]
-    # Tables de fait — échantillonnées selon sample_fraction
-    sample_tables = ["lineitem", "orders"]
+    # Même échantillon que le pipeline ELT (préparé une seule fois par scripts/dbgen.py,
+    # échantillonnage par clé de commande → intégrité référentielle conservée).
+    src_dir = sample_dir(sample_fraction)
 
     raw: dict[str, pd.DataFrame] = {}
-    for table in full_tables + sample_tables:
-        path = os.path.join(DATA_DIR, f"{table}.parquet")
-        df   = pd.read_parquet(path)
-        if table in sample_tables and sample_fraction < 1.0:
-            df = df.sample(frac=sample_fraction, random_state=42).reset_index(drop=True)
-        raw[table] = df
+    for table in ["customer", "part", "region", "nation", "lineitem", "orders"]:
+        raw[table] = pd.read_parquet(os.path.join(src_dir, f"{table}.parquet"))
         print(f"  ✔ {table:<12}: {len(raw[table]):>10,} lignes chargées")
 
     print()
@@ -177,14 +172,14 @@ def transform_fact_sales(lineitem_f: pd.DataFrame, orders: pd.DataFrame,
                           customer: pd.DataFrame, nation: pd.DataFrame) -> pd.DataFrame:
     customer_with_region = (
         customer[["c_custkey", "c_nationkey"]]
-        .merge(nation[["n_nationkey", "n_regionkey"]], left_on="c_nationkey", right_on="n_nationkey", how="left")
+        .merge(nation[["n_nationkey", "n_regionkey"]], left_on="c_nationkey", right_on="n_nationkey", how="inner")
         [["c_custkey", "n_regionkey"]]
         .rename(columns={"n_regionkey": "region_key"})
     )
     return (
         lineitem_f[["l_orderkey", "l_partkey", "l_shipdate", "l_quantity", "l_extendedprice", "l_discount"]]
-        .merge(orders[["o_orderkey", "o_custkey"]], left_on="l_orderkey", right_on="o_orderkey", how="left")
-        .merge(customer_with_region,               left_on="o_custkey",  right_on="c_custkey",  how="left")
+        .merge(orders[["o_orderkey", "o_custkey"]], left_on="l_orderkey", right_on="o_orderkey", how="inner")
+        .merge(customer_with_region,               left_on="o_custkey",  right_on="c_custkey",  how="inner")
         .assign(revenue=lambda df: (df["l_extendedprice"] * (1 - df["l_discount"])).round(2).astype("float64"))
         [["l_orderkey", "l_partkey", "l_shipdate", "o_custkey", "region_key", "l_quantity", "revenue"]]
         .rename(columns={
@@ -276,10 +271,10 @@ def data_ingestion(transform_results: list, sample_fraction: float = 1.0) -> Non
     load(transformed)
 
 
-SCALE_FACTORS = [0.1, 0.5, 1.0]
+SAMPLE_FRACTIONS = [0.1, 0.5, 1.0]
 
 
-def _run_single_scale(sf: float) -> None:
+def _run_single_fraction(sf: float) -> None:
     """
     Exécute le pipeline ETL pour un seul scale factor et sauvegarde
     les résultats dans un fichier JSON temporaire.
@@ -296,7 +291,7 @@ def _run_single_scale(sf: float) -> None:
 
     sf_results = [benchmark_data_ingestion.to_dict()] + transform_results
     for r in sf_results:
-        r["scale_factor"] = sf
+        r["sample_fraction"] = sf
 
     # Affichage des tables pour ce scale
     print("\n" + "=" * 50)
@@ -335,18 +330,20 @@ def _run_single_scale(sf: float) -> None:
         print(benchmark.result)
         if benchmark.execution_time:
             r = benchmark.to_dict()
-            r["scale_factor"] = sf
+            r["sample_fraction"] = sf
             sf_results.append(r)
 
     # Sauvegarde temporaire pour ce scale
     tmp_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                            f"_etl_tmp_sf{sf}.json")
+                            f"_etl_tmp_f{sf:g}.json")
     with open(tmp_path, "w") as f:
         json.dump(sf_results, f, indent=4)
 
 
-def launch():
-    import subprocess, sys, json
+def launch(fractions=SAMPLE_FRACTIONS, output="etl_benchmark_results.json"):
+    import json
+    import subprocess
+    import sys
 
     print("\n" + "=" * 50 + "\n")
     print("Lancement du pipeline ETL (Python + DuckDB)...\n")
@@ -354,9 +351,9 @@ def launch():
 
     all_results = []
 
-    for sf in SCALE_FACTORS:
+    for sf in fractions:
         print(f"\n{'─'*50}")
-        print(f"  Scale factor : {sf} ({int(sf*100)}% des données)")
+        print(f"  Sample fraction : {sf:g} ({sf*100:g}% des commandes)")
         print(f"{'─'*50}\n")
 
         # Chaque scale factor tourne dans un subprocess isolé
@@ -364,7 +361,7 @@ def launch():
         # ROOT_DIR pointe sur la racine du projet (parent de etl_project/)
         script = (
             f"import sys; sys.path.insert(0, r'{ROOT_DIR.rstrip(os.sep)}'); "
-            f"import etl_project.etl as etl; etl._run_single_scale({sf})"
+            f"import etl_project.etl as etl; etl._run_single_fraction({sf})"
         )
         result = subprocess.run(
             [sys.executable, "-c", script],
@@ -372,12 +369,11 @@ def launch():
         )
 
         if result.returncode != 0:
-            print(f"  ❌ Erreur lors du run sf={sf}")
-            continue
+            raise RuntimeError(f"ETL run failed for sample fraction {sf}")
 
         # Lire les résultats du subprocess
         tmp_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                f"_etl_tmp_sf{sf}.json")
+                                f"_etl_tmp_f{sf:g}.json")
         if os.path.exists(tmp_path):
             with open(tmp_path) as f:
                 all_results.extend(json.load(f))
@@ -386,5 +382,5 @@ def launch():
     results = all_results
 
     df = pd.DataFrame(results)
-    df.to_json("etl_benchmark_results.json", orient="records", indent=4)
+    df.to_json(os.path.join(ROOT_DIR, output), orient="records", indent=4)
     print("\nLe fichier etl_benchmark_results.json a été créé avec succès.")

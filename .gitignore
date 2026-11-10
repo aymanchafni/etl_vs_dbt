@@ -218,3 +218,10 @@ __marimo__/
 data/*
 
 .tmp/*
+# Project
+.DS_Store
+dbt_project/target/
+dbt_project/logs/
+dbt_project/.user.yml
+logs/
+results/

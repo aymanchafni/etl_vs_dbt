@@ -1,295 +1,200 @@
-from scripts.dbgen import ROOT_DIR, create_persistent_database, tables as dbgen_tables
-import subprocess
+"""ELT pipeline: load the raw TPC-H sample into DuckDB, then transform in-database with dbt.
+
+Measurement notes
+-----------------
+* `dbt run` is invoked ONCE per sample fraction. Per-model times come from dbt's own
+  `target/run_results.json` (time spent executing each model in DuckDB).
+  The earlier approach — one `dbt run --select <model>` subprocess per model — mostly
+  measured dbt's ~4 s start-up/parsing cost, which is why it barely changed with data size.
+* dbt's start-up/parsing overhead is still real, so it is reported separately as
+  "dbt CLI overhead".
+* Analyses are compiled once (`dbt compile`) and the compiled SQL is executed directly on
+  DuckDB, exactly like the ETL side runs its analytical queries.
+"""
+
+import json
 import os
-import pandas as pd
+import re
+import subprocess
+import sys
+from time import perf_counter
+
+import duckdb
+
+from scripts.dbgen import ROOT_DIR, sample_dir
+from scripts.dbgen import tables as dbgen_tables
 from utils import benchmark_decorator
 
 DBT_PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
-ANALYSES_DIR = DBT_PROJECT_DIR + "/analyses"
+ANALYSES_DIR = os.path.join(DBT_PROJECT_DIR, "analyses")
+TARGET_DIR = os.path.join(DBT_PROJECT_DIR, "target")
+DB_PATH = os.path.join(ROOT_DIR, "data", "elt_database.db")
 
-# Tables de référence — toujours chargées complètes
-_FULL_TABLES   = {"customer", "part", "region", "nation", "partsupp", "supplier"}
-# Tables de fait — échantillonnées selon sample_fraction
-_SAMPLE_TABLES = {"lineitem", "orders"}
+MART_MODELS = ["dim_region", "dim_date", "dim_customer", "dim_product", "fact_sales"]
+SAMPLE_FRACTIONS = [0.1, 0.5, 1.0]
 
 
-def _load_sources_with_sample(sample_fraction: float = 1.0) -> None:
-    """
-    Charge les tables sources dans elt_database.db en appliquant
-    un échantillonnage sur lineitem et orders via DuckDB USING SAMPLE.
-    """
-    import duckdb as _duckdb
-    db_path = os.path.join(ROOT_DIR, "data", "elt_database.db")
-    print(f"--- [LOAD SOURCES] Chargement des tables sources (sample={sample_fraction}) ---")
+def _dbt(*args, check=True) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["dbt", *args, "--profiles-dir", DBT_PROJECT_DIR],
+        cwd=DBT_PROJECT_DIR, capture_output=True, text=True, check=check,
+    )
 
-    with _duckdb.connect(database=db_path) as con:
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Load + transform
+# ─────────────────────────────────────────────────────────────────────────────
+def load_sources(sample_fraction: float = 1.0) -> None:
+    """EL: copy the raw (sampled) Parquet files into DuckDB as-is."""
+    print(f"--- [LOAD SOURCES] raw tables into DuckDB (sample={sample_fraction:g}) ---")
+    src_dir = sample_dir(sample_fraction)
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    with duckdb.connect(database=DB_PATH) as con:
         for table in dbgen_tables:
-            parquet = os.path.join(ROOT_DIR, "data", f"{table}.parquet")
-            if not os.path.exists(parquet):
-                continue
-            if table in _SAMPLE_TABLES and sample_fraction < 1.0:
-                pct   = sample_fraction * 100
-                query = (f"CREATE OR REPLACE TABLE {table} AS "
-                         f"SELECT * FROM read_parquet('{parquet}') "
-                         f"USING SAMPLE {pct}% (bernoulli, 42);")
-            else:
-                query = (f"CREATE OR REPLACE TABLE {table} AS "
-                         f"SELECT * FROM read_parquet('{parquet}');")
-            con.execute(query)
+            parquet = os.path.join(src_dir, f"{table}.parquet").replace("\\", "/")
+            con.execute(f"CREATE OR REPLACE TABLE {table} AS SELECT * FROM read_parquet('{parquet}')")
             count = con.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-            print(f"  ✔ {table:<12}: {count:>10,} lignes chargées")
-    print()
+            print(f"  ✔ {table:<12}: {count:>10,} rows")
 
 
-def run_dbt_run(sample_fraction: float = 1.0):
-    print("--- Chargement des tables sources brutes dans DuckDB ---")
-    _load_sources_with_sample(sample_fraction)
+def run_models() -> float:
+    """T: `dbt run` once. Returns the wall-clock time of the dbt command."""
+    print("--- [TRANSFORM] dbt run ---")
+    t0 = perf_counter()
+    result = _dbt("run", check=False)
+    elapsed = perf_counter() - t0
+    if result.returncode != 0:
+        raise RuntimeError(f"dbt run failed:\n{result.stdout}\n{result.stderr}")
+    return elapsed
 
-    print("--- Exécution de dbt run pour créer les tables de dimension et de fait dans DuckDB ---")
 
-    cmd = ["dbt", "run", "--quiet"]
+def model_timings() -> dict[str, float]:
+    """Execution time of each model, from dbt's run_results.json."""
+    with open(os.path.join(TARGET_DIR, "run_results.json")) as f:
+        results = json.load(f)["results"]
+    return {r["unique_id"].split(".")[-1]: r["execution_time"] for r in results}
 
-    try:
-        subprocess.run(
-            cmd,
-            cwd=DBT_PROJECT_DIR,
-            capture_output=True,
-            text=True,
-            check=True
-        )
-    except subprocess.CalledProcessError as e:
-        print(f"Erreur lors de l'exécution de dbt run : {e.stderr}")
 
-def run_dbt_compile():
-    print("--- Compilation des modèles dbt pour vérifier la syntaxe et la configuration ---")
+def row_count(table: str) -> int:
+    with duckdb.connect(database=DB_PATH, read_only=True) as con:
+        return con.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
 
-    cmd = ["dbt", "compile", "--quiet"]
-    
-    try:
-        subprocess.run(
-            cmd, 
-            cwd=DBT_PROJECT_DIR, 
-            capture_output=True, 
-            text=True, 
-            check=True
-        )
-    except subprocess.CalledProcessError as e:
-        print(f"Erreur lors de l'exécution de dbt compile : {e.stderr}")
 
+def run_compiled_analysis(name: str):
+    path = os.path.join(TARGET_DIR, "compiled", "dbt_elt", "analyses", f"{name}.sql")
+    with open(path) as f:
+        sql = f.read()
+    with duckdb.connect(database=DB_PATH, read_only=True) as con:
+        return con.execute(sql).fetchdf()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Benchmark (one subprocess per sample fraction so memory is fully released)
+# ─────────────────────────────────────────────────────────────────────────────
+def _run_single_fraction(fraction: float) -> None:
+    run_wall = {}
+
+    def pipeline():
+        load_sources(fraction)
+        run_wall["dbt run"] = run_models()
+
+    total = benchmark_decorator("Data ingestion and dimensional modeling", pipeline)()
+    results = [total.to_dict()]
+
+    timings = model_timings()
+    for model in MART_MODELS:
+        rows = row_count(model)
+        t = timings[model]
+        results.append({
+            "analysis_name": f"Transform {model}", "execution_time": t, "cpu_time": None,
+            "memory_peak": None, "row_count": rows, "throughput": round(rows / t, 2) if t else None,
+        })
+    overhead = run_wall["dbt run"] - sum(timings.values())
+    results.append({
+        "analysis_name": "dbt CLI overhead (startup, parsing)", "execution_time": overhead,
+        "cpu_time": None, "memory_peak": None, "row_count": None, "throughput": None,
+    })
+    print(f"\n  dbt run wall time {run_wall['dbt run']:.2f}s = models {sum(timings.values()):.2f}s "
+          f"+ CLI overhead {overhead:.2f}s")
+
+    _dbt("compile")  # untimed: produces the compiled analysis SQL
+    for file in sorted(os.listdir(ANALYSES_DIR)):
+        if not file.endswith(".sql"):
+            continue
+        name = file[:-4]
+        print(f"\n  [Analysis] {name}")
+        b = benchmark_decorator(
+            analysis_name=name.replace("_", " ").capitalize(),
+            func=lambda n=name: run_compiled_analysis(n),
+        )()
+        print(b.result)
+        results.append(b.to_dict())
+
+    for r in results:
+        r["sample_fraction"] = fraction
+    with open(os.path.join(DBT_PROJECT_DIR, f"_dbt_tmp_f{fraction:g}.json"), "w") as f:
+        json.dump(results, f, indent=4)
+
+
+def launch(fractions=SAMPLE_FRACTIONS, output="dbt_benchmark_results.json") -> list[dict]:
+    import pandas as pd
+
+    print("\n" + "=" * 50 + "\nELT pipeline (DuckDB load + dbt)\n" + "=" * 50)
+    # Untimed warm-up: the very first dbt invocation does a full project parse (several
+    # seconds); later ones reuse the partial-parse cache. Without this, the first sample
+    # fraction would be unfairly penalised.
+    _dbt("parse")
+    all_results = []
+    for fraction in fractions:
+        print(f"\n{'─' * 50}\n  Sample fraction: {fraction:g}\n{'─' * 50}\n")
+        script = (f"import sys; sys.path.insert(0, r'{ROOT_DIR}'); "
+                  f"import dbt_project.dbt as dbt; dbt._run_single_fraction({fraction})")
+        if subprocess.run([sys.executable, "-c", script], cwd=ROOT_DIR).returncode != 0:
+            raise RuntimeError(f"ELT run failed for sample fraction {fraction}")
+        tmp = os.path.join(DBT_PROJECT_DIR, f"_dbt_tmp_f{fraction:g}.json")
+        with open(tmp) as f:
+            all_results.extend(json.load(f))
+        os.remove(tmp)
+
+    pd.DataFrame(all_results).to_json(os.path.join(ROOT_DIR, output), orient="records", indent=4)
+    print(f"\n{output} written")
+    return all_results
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Data-quality tests (dbt test)
+# ─────────────────────────────────────────────────────────────────────────────
 def _execute_dbt_tests() -> str:
-    """
-    Exécute tous les tests dbt en une seule commande et retourne le stdout brut.
+    """Run all dbt tests in one command and return the raw output.
 
-    On ne lance pas par modèle car les relationship tests référencent deux modèles
-    (fact_sales + une dim), ce qui rend tout sélecteur per-modèle soit incomplet
-    (tests manquants) soit redondant (double-comptage).
-    Un seul `dbt test` global garantit exactement 29 tests — identique à l'ETL.
-
-    IMPORTANT : pas de --quiet — supprime la ligne "Done. PASS=X..." dont le regex a besoin.
+    Tests are not run per model: relationship tests reference two models, so any
+    per-model selector would either miss or double-count them.
     """
-    cmd = ["dbt", "test"]
-    try:
-        result = subprocess.run(
-            cmd, cwd=DBT_PROJECT_DIR, capture_output=True, text=True, check=True
-        )
-        return result.stdout + result.stderr
-    except subprocess.CalledProcessError as e:
-        return (e.stdout or "") + (e.stderr or "")
+    result = _dbt("test", check=False)
+    return result.stdout + result.stderr
 
 
 def _parse_dbt_test_output(output: str) -> dict:
-    """
-    Parse le résumé dbt hors chrono via regex sur la ligne :
-    'Done. PASS=X WARN=Y ERROR=Z SKIP=W NO-OP=W TOTAL=N'
-    NO-OP= est optionnel (introduit en dbt 1.8+).
-    WARN + ERROR comptent comme des tests échoués.
-    """
-    import re
+    """Parse 'Done. PASS=X WARN=Y ERROR=Z SKIP=W [NO-OP=V] TOTAL=N'. WARN + ERROR = failed."""
     pattern = re.compile(
-        r'PASS=(\d+)\s+WARN=(\d+)\s+ERROR=(\d+)'
-        r'(?:\s+SKIP=\d+)?(?:\s+NO-OP=\d+)?\s+TOTAL=(\d+)',
-        re.IGNORECASE
+        r"PASS=(\d+)\s+WARN=(\d+)\s+ERROR=(\d+)(?:\s+SKIP=\d+)?(?:\s+NO-OP=\d+)?\s+TOTAL=(\d+)",
+        re.IGNORECASE,
     )
     m = pattern.search(output)
     if m:
-        passed = int(m.group(1))
-        warn   = int(m.group(2))
-        error  = int(m.group(3))
-        return {"tests_passed": passed, "tests_failed": warn + error}
+        return {"tests_passed": int(m.group(1)), "tests_failed": int(m.group(2)) + int(m.group(3))}
     return {"tests_passed": 0, "tests_failed": 0}
 
-def run_dbt_tests(model_name=None) -> dict:
-    """Wrapper public : exécution + parsing (pour usage direct hors benchmark)."""
-    return _parse_dbt_test_output(_execute_dbt_tests(model_name))
 
-
-def run_dbt_model(model_name):
-    """
-    Lance dbt run sur un seul modèle et retourne le nombre de lignes produites.
-    Le row count est lu directement depuis elt_database.db — plus fiable que dbt show --inline.
-    """
-    import duckdb as _duckdb
-    from scripts.dbgen import ROOT_DIR as _ROOT
-
-    cmd = ["dbt", "run", "--select", model_name, "--quiet"]
-    try:
-        subprocess.run(cmd, cwd=DBT_PROJECT_DIR, capture_output=True, text=True, check=True)
-    except subprocess.CalledProcessError as e:
-        print(f"Erreur lors de l'exécution de dbt run --select {model_name} :")
-        if e.stdout: print(e.stdout)
-        if e.stderr: print(e.stderr)
-        return None
-
-    # Lire le row count directement depuis le fichier DuckDB — fiable et sans subprocess supplémentaire
-    db_path = os.path.join(_ROOT, "data", "elt_database.db")
-    try:
-        with _duckdb.connect(database=db_path, read_only=True) as con:
-            return con.execute(f"SELECT COUNT(*) FROM {model_name}").fetchone()[0]
-    except Exception:
-        return None
-
-def run_dbt_analysis(analysis_name):
-    print(f"--- Exécution de l'analyse : \"{analysis_name.replace('_', ' ')}\" ---")
-    
-    # --quiet évite les logs inutiles
-    cmd = ["dbt", "show", "--select", analysis_name, "--quiet"]
-        
-    try:
-        result = subprocess.run(
-            cmd, 
-            cwd=DBT_PROJECT_DIR, 
-            capture_output=True, 
-            text=True, 
-            check=True
-        )
-    
-        print(f"\n{result.stdout}")
-    except subprocess.CalledProcessError as e:
-        print(f"Erreur lors de l'exécution de {analysis_name} : {e.stderr}")
-        return None
-
-SCALE_FACTORS = [0.1, 0.5, 1.0]
-
-
-def _run_single_scale(sf: float) -> None:
-    """
-    Exécute le pipeline ELT pour un seul scale factor et sauvegarde
-    les résultats dans un fichier JSON temporaire.
-    Appelé dans un subprocess isolé pour libérer toute la mémoire après.
-    """
-    import json
-
-    dbt_run_benchmark = benchmark_decorator(
-        analysis_name="Data ingestion and dimensional modeling",
-        func=lambda: run_dbt_run(sf)
-    )()
-
-    sf_results = [dbt_run_benchmark.to_dict()]
-
-    # Phase Transform — benchmarking par modèle
-    print("\n--- Benchmarking par modèle dbt (phase Transform) ---")
-    mart_models = ["dim_region", "dim_date", "dim_customer", "dim_product", "fact_sales"]
-    for model in mart_models:
-        print(f"\n  [Transform {model}]")
-        b = benchmark_decorator(
-            analysis_name  = f"Transform {model}",
-            func           = lambda m=model: run_dbt_model(m),
-            row_count_func = lambda r: r if isinstance(r, int) else None,
-        )()
-        if b.execution_time:
-            sf_results.append(b.to_dict())
-
-    # Phase Analyse
-    analysis_files = [f for f in os.listdir(ANALYSES_DIR) if f.endswith(".sql")]
-    for file in analysis_files:
-        analysis_name = file.replace(".sql", "")
-        benchmark = benchmark_decorator(
-            analysis_name=analysis_name.replace("_", " ").capitalize(),
-            func=lambda name=analysis_name: run_dbt_analysis(name)
-        )()
-        if benchmark.execution_time:
-            sf_results.append(benchmark.to_dict())
-
-    for r in sf_results:
-        r["scale_factor"] = sf
-
-    tmp_path = os.path.join(DBT_PROJECT_DIR, f"_dbt_tmp_sf{sf}.json")
-    with open(tmp_path, "w") as f:
-        json.dump(sf_results, f, indent=4)
-
-
-def launch():
-    import subprocess, sys, json
-
-    print("\n" + "="*50 + "\n")
-    print("Lancement du pipeline ELT (dbt + DuckDB)...\n")
-
-    all_results = []
-
-    for sf in SCALE_FACTORS:
-        print(f"\n{'─'*50}")
-        print(f"  Scale factor : {sf} ({int(sf*100)}% des données)")
-        print(f"{'─'*50}\n")
-
-        # Chaque scale factor tourne dans un subprocess isolé
-        # ROOT_DIR pointe sur la racine du projet (parent de dbt_project/)
-        project_root = os.path.dirname(DBT_PROJECT_DIR)
-        script = (
-            f"import sys; sys.path.insert(0, r'{os.path.dirname(DBT_PROJECT_DIR)}'); "
-            f"import dbt_project.dbt as dbt; dbt._run_single_scale({sf})"
-        )
-        result = subprocess.run(
-            [sys.executable, "-c", script],
-            cwd=DBT_PROJECT_DIR,
-        )
-
-        if result.returncode != 0:
-            print(f"  ❌ Erreur lors du run sf={sf}")
-            continue
-
-        tmp_path = os.path.join(DBT_PROJECT_DIR, f"_dbt_tmp_sf{sf}.json")
-        if os.path.exists(tmp_path):
-            with open(tmp_path) as f:
-                all_results.extend(json.load(f))
-            os.remove(tmp_path)
-
-    df = pd.DataFrame(all_results)
-    df.to_json('dbt_benchmark_results.json', orient='records', indent=4)
-    print("\nLe fichier dbt_benchmark_results.json a été créé avec succès.")
-
-
+def run_dbt_tests() -> dict:
+    return _parse_dbt_test_output(_execute_dbt_tests())
 
 
 def launch_tests() -> list[dict]:
-    """
-    Exécute tous les tests dbt en une seule commande benchmarkée.
-    Un seul run global = 29 tests, identique au périmètre ETL.
-    """
-    print("\n" + "=" * 50)
-    print("TESTS DE QUALITÉ — Pipeline ELT (dbt test)")
-    print("=" * 50 + "\n")
-
-    # Benchmark de l'exécution SQL uniquement — parsing hors chrono
-    b = benchmark_decorator(
-        analysis_name = "Tests (tous modèles)",
-        func          = _execute_dbt_tests,
-    )()
-
-    # Parsing hors chrono — pas de biais sur la mesure
-    counts = _parse_dbt_test_output(b.result or "")
-
-    bdict = b.to_dict()
-    bdict["tests_passed"] = counts["tests_passed"]
-    bdict["tests_failed"] = counts["tests_failed"]
-
-    status = "✅" if bdict["tests_failed"] == 0 else "❌"
-    print(f"\n  {status} {bdict['tests_passed']} passés"
-          + (f", {bdict['tests_failed']} échoués" if bdict["tests_failed"] else ""))
-
-    total = bdict["tests_passed"] + bdict["tests_failed"]
-    print(f"\n{'=' * 50}")
-    print(f"RÉSULTAT : {bdict['tests_passed']}/{total} tests passés"
-          + (f"  ⚠️  {bdict['tests_failed']} échecs" if bdict["tests_failed"] else "  ✅ Tous passés"))
-    print("=" * 50)
-
+    print("\n" + "=" * 50 + "\nDATA-QUALITY TESTS — ELT pipeline (dbt test)\n" + "=" * 50 + "\n")
+    b = benchmark_decorator(analysis_name="Tests (all models)", func=_execute_dbt_tests)()
+    counts = _parse_dbt_test_output(b.result or "")  # parsed outside the timed section
+    bdict = {**b.to_dict(), **counts}
+    total = counts["tests_passed"] + counts["tests_failed"]
+    print(f"\nRESULT: {counts['tests_passed']}/{total} tests passed")
     return [bdict]

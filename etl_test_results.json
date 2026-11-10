@@ -1,13 +1,13 @@
 [
     {
         "analysis_name":"Tests (tous mod\u00e8les)",
-        "start_time":1776329931.6376714706,
-        "end_time":1776329931.8171846867,
-        "execution_time":0.179513216,
-        "cpu_time":0.1596,
-        "memory_peak":0.7127304077,
+        "start_time":1794282800.7523465157,
+        "end_time":1794282801.0079295635,
+        "execution_time":0.2555830479,
+        "cpu_time":0.27,
+        "memory_peak":420.4,
         "row_count":29,
-        "throughput":161.55,
+        "throughput":113.47,
         "tests_passed":29,
         "tests_failed":0
     }
